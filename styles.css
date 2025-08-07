@@ -1,0 +1,39 @@
+body {
+    font-family: 'Inter', sans-serif;
+}
+/* 隱藏檔案輸入的預設樣式 */
+input[type="file"] {
+    display: none;
+}
+/* 自訂檔案輸入按鈕的樣式 */
+.custom-file-upload {
+    border: 2px solid #3b82f6; /* blue-500 */
+    display: inline-block;
+    padding: 0.75rem 1.5rem;
+    cursor: pointer;
+    border-radius: 0.5rem; /* rounded-lg */
+    background-color: #3b82f6; /* blue-500 */
+    color: white;
+    transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
+    margin-bottom: 1rem; /* 增加底部間距 */
+}
+.custom-file-upload:hover {
+    background-color: #2563eb; /* blue-600 */
+    border-color: #2563eb;
+}
+
+/* 拖曳區域的樣式 */
+#dropArea {
+    border: 2px dashed #cbd5e0; /* gray-300 */
+    border-radius: 0.5rem;
+    padding: 2rem;
+    text-align: center;
+    transition: border-color 0.2s ease-in-out, background-color 0.2s ease-in-out;
+    margin-bottom: 1.5rem; /* 增加底部間距 */
+    background-color: #f8fafc; /* gray-50 */
+}
+
+#dropArea.drag-over {
+    border-color: #3b82f6; /* blue-500 */
+    background-color: #e0f2fe; /* blue-100 */
+}
