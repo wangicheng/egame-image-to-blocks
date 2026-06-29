@@ -37,3 +37,14 @@ input[type="file"] {
     border-color: #3b82f6; /* blue-500 */
     background-color: #e0f2fe; /* blue-100 */
 }
+
+/* 像素風畫布縮放樣式 */
+.pixelated-canvas {
+    image-rendering: -moz-crisp-edges;
+    image-rendering: -webkit-crisp-edges;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    width: 256px;
+    height: 256px;
+    display: block;
+}

@@ -7,10 +7,10 @@ function hexToRgb(hex) {
 }
 
 // 圖片轉換核心邏輯
-function convertImageToNumberString(imageSrc, availableColors, indexMap) {
+function convertImageToNumberString(imageSrc, availableColors, indexMap, ditherStrength = 0.0) {
     return new Promise((resolve, reject) => {
         const img = new Image();
-        img.crossOrigin = "Anonymous"; // 處理 CORS 問題
+        img.crossOrigin = "Anonymous";
 
         img.onload = () => {
             const canvas = document.getElementById('imageCanvas');
@@ -19,10 +19,15 @@ function convertImageToNumberString(imageSrc, availableColors, indexMap) {
             const targetHeight = 80;
             canvas.width = targetWidth;
             canvas.height = targetHeight;
+            
+            // 保持最近鄰居法 (保留邊緣銳利度)
+            ctx.imageSmoothingEnabled = false; 
             ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
 
             const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
             const pixels = imageData.data;
+            const width = canvas.width;
+            const height = canvas.height;
             let numberString = '';
 
             if (!Array.isArray(availableColors) || availableColors.some(color => !Array.isArray(color) || color.length !== 3)) {
@@ -30,28 +35,90 @@ function convertImageToNumberString(imageSrc, availableColors, indexMap) {
                 return;
             }
 
-            function colorDistance(color1, color2) {
+            // 顏色距離計算 (優化效能版，直接取平方和)
+            function colorDistanceSquared(color1, color2) {
                 const dr = color1[0] - color2[0];
                 const dg = color1[1] - color2[1];
                 const db = color1[2] - color2[2];
-                return Math.sqrt(dr * dr + dg * dg + db * db);
+                return (dr * dr) + (dg * dg) + (db * db);
             }
 
-            for (let i = 0; i < pixels.length; i += 4) {
-                const currentColor = [pixels[i], pixels[i + 1], pixels[i + 2]];
-                let minDistance = Infinity;
-                let closestColorIndex = -1;
+            const getIndex = (x, y) => (y * width + x) * 4;
 
-                for (let j = 0; j < availableColors.length; j++) {
-                    const distance = colorDistance(currentColor, availableColors[j]);
-                    if (distance < minDistance) {
-                        minDistance = distance;
-                        closestColorIndex = j;
+            // Dither Strength (由參數傳入): 設為 1.0 是標準抖動，設為 0.5 噪點少一半，設為 0.0 完全無抖動(純色塊) 
+
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const idx = getIndex(x, y);
+
+                    const oldR = pixels[idx];
+                    const oldG = pixels[idx + 1];
+                    const oldB = pixels[idx + 2];
+
+                    let minDistance = Infinity;
+                    let closestColorIndex = -1;
+
+                    // 找出色盤中最接近的顏色
+                    for (let j = 0; j < availableColors.length; j++) {
+                        const distance = colorDistanceSquared([oldR, oldG, oldB], availableColors[j]);
+                        if (distance < minDistance) {
+                            minDistance = distance;
+                            closestColorIndex = j;
+                        }
                     }
+
+                    const mappedIndex = indexMap[closestColorIndex];
+                    numberString += String(mappedIndex);
+
+                    const newColor = availableColors[closestColorIndex];
+                    
+                    // 計算捨棄的誤差，並乘上「抖動強度」來削弱副作用
+                    const errR = (oldR - newColor[0]) * ditherStrength;
+                    const errG = (oldG - newColor[1]) * ditherStrength;
+                    const errB = (oldB - newColor[2]) * ditherStrength;
+
+                    // 將當前像素值替換成量化後的色盤顏色，以便在畫布上呈現最終結果
+                    pixels[idx] = newColor[0];
+                    pixels[idx + 1] = newColor[1];
+                    pixels[idx + 2] = newColor[2];
+
+                    // Atkinson 矩陣將誤差平分為 8 份，但只把 6 份擴散出去 (總共只擴散 75%)
+                    // 這會讓顏色允許「跑掉」25%，從而產生大面積乾淨的色塊，減少沙粒感。
+                    const eR = errR * 0.125; // 1/8 的誤差
+                    const eG = errG * 0.125;
+                    const eB = errB * 0.125;
+
+                    // 輔助函式：快速將誤差加上去
+                    const addError = (offsetX, offsetY) => {
+                        const nx = x + offsetX;
+                        const ny = y + offsetY;
+                        if (nx >= 0 && nx < width && ny < height) {
+                            const i = getIndex(nx, ny);
+                            pixels[i]     += eR;
+                            pixels[i + 1] += eG;
+                            pixels[i + 2] += eB;
+                        }
+                    };
+
+                    // Atkinson 矩陣的擴散位置：
+                    addError(1, 0);  // 右 (x+1, y)
+                    addError(2, 0);  // 右二 (x+2, y)
+                    addError(-1, 1); // 左下 (x-1, y+1)
+                    addError(0, 1);  // 下 (x, y+1)
+                    addError(1, 1);  // 右下 (x+1, y+1)
+                    addError(0, 2);  // 下二 (x, y+2)
                 }
-                const mappedIndex = indexMap[closestColorIndex];
-                numberString += String(mappedIndex);
             }
+
+            // 將轉換後的像素資料繪製到預覽畫布上
+            const previewCanvas = document.getElementById('previewCanvas');
+            if (previewCanvas) {
+                const previewCtx = previewCanvas.getContext('2d');
+                previewCanvas.width = targetWidth;
+                previewCanvas.height = targetHeight;
+                previewCtx.putImageData(imageData, 0, 0);
+            }
+            
             resolve(numberString);
         };
 
@@ -115,7 +182,10 @@ function showMessage(message, type = 'info') {
 // DOM 元素
 const imageUpload = document.getElementById('imageUpload');
 const imageCanvas = document.getElementById('imageCanvas');
+const previewCanvas = document.getElementById('previewCanvas');
 const canvasMessage = document.getElementById('canvasMessage');
+const ditherStrengthSlider = document.getElementById('ditherStrength');
+const ditherStrengthValue = document.getElementById('ditherStrengthValue');
 // MODIFIED: Variable name updated for clarity
 const blocklyXmlOutput = document.getElementById('blocklyXmlOutput');
 const copyButton = document.getElementById('copyButton');
@@ -136,8 +206,43 @@ while (newIndexMap.length < hexColors.length) {
     currentNum++;
 }
 
+let currentImageUrl = null;
+
+async function runConversion(showToast = false) {
+    if (!currentImageUrl) return;
+
+    canvasMessage.textContent = '正在轉換圖片...';
+    blocklyXmlOutput.value = '轉換中...';
+    copyButton.disabled = true;
+
+    // 清除上一次的預覽
+    if (previewCanvas) {
+        const previewCtx = previewCanvas.getContext('2d');
+        previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+    }
+
+    try {
+        const ditherStrength = ditherStrengthSlider ? (parseFloat(ditherStrengthSlider.value) / 100) : 0.0;
+        const numberString = await convertImageToNumberString(currentImageUrl, availableColorsRgb, newIndexMap, ditherStrength);
+        const resultXml = textToBlocks(numberString, hexColors, newIndexMap);
+        blocklyXmlOutput.value = resultXml;
+        copyButton.disabled = false;
+        canvasMessage.textContent = '圖片已載入並轉換完成';
+        if (showToast) {
+            showMessage('圖片轉換成功！', 'success');
+        }
+    } catch (error) {
+        console.error("轉換圖片時發生錯誤:", error);
+        blocklyXmlOutput.value = '轉換失敗，請檢查主控台。';
+        copyButton.disabled = true;
+        canvasMessage.textContent = '圖片載入或轉換失敗';
+        showMessage(`錯誤: ${error.message}`, 'error');
+    }
+}
+
 async function processFiles(files) {
     if (files.length === 0) {
+        currentImageUrl = null;
         blocklyXmlOutput.value = '';
         copyButton.disabled = true;
         canvasMessage.textContent = '請選擇圖片';
@@ -148,6 +253,7 @@ async function processFiles(files) {
 
     if (!file.type.startsWith('image/')) {
         showMessage('請上傳圖片檔案 (例如 .jpg, .png, .gif)', 'error');
+        currentImageUrl = null;
         blocklyXmlOutput.value = '';
         copyButton.disabled = true;
         canvasMessage.textContent = '請選擇圖片';
@@ -156,28 +262,8 @@ async function processFiles(files) {
 
     const reader = new FileReader();
     reader.onload = async (e) => {
-        const imageUrl = e.target.result;
-        // MODIFIED: User-facing text updated
-        canvasMessage.textContent = '正在載入並轉換圖片...';
-        blocklyXmlOutput.value = '轉換中...';
-        copyButton.disabled = true;
-
-        try {
-            const numberString = await convertImageToNumberString(imageUrl, availableColorsRgb, newIndexMap);
-            const resultXml = textToBlocks(numberString, hexColors, newIndexMap);
-            blocklyXmlOutput.value = resultXml;
-            copyButton.disabled = false;
-            // MODIFIED: User-facing text updated
-            canvasMessage.textContent = '圖片已載入並轉換完成';
-            showMessage('圖片轉換成功！', 'success');
-        } catch (error) {
-            // MODIFIED: User-facing text updated
-            console.error("轉換圖片時發生錯誤:", error);
-            blocklyXmlOutput.value = '轉換失敗，請檢查主控台。';
-            copyButton.disabled = true;
-            canvasMessage.textContent = '圖片載入或轉換失敗';
-            showMessage(`錯誤: ${error.message}`, 'error');
-        }
+        currentImageUrl = e.target.result;
+        await runConversion(true);
     };
     reader.readAsDataURL(file);
 }
@@ -246,6 +332,15 @@ copyButton.addEventListener('click', () => {
         showMessage('沒有內容可以複製。', 'info');
     }
 });
+
+// 抖動強度調整事件監聽
+if (ditherStrengthSlider && ditherStrengthValue) {
+    ditherStrengthSlider.addEventListener('input', () => {
+        const val = ditherStrengthSlider.value;
+        ditherStrengthValue.textContent = `${val}%`;
+        runConversion(false);
+    });
+}
 
 // 初始化狀態
 blocklyXmlOutput.value = '';
